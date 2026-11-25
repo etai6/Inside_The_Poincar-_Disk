@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inside the Poincaré Disk</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Public+Sans:wght@400;600&display=swap">
+<style>
+:root{--bg:#e6ece8;--panel:#f6f8f6;--ink:#17302f;--mute:#4f6564;--line:#b8c7c2;--accent:#8a6200;--btn:#17302f;--btnink:#f6f8f6;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c1818;--panel:#132625;--ink:#e4eeea;--mute:#9bb2ad;--line:#2b4643;--accent:#f2c14e;--btn:#e4eeea;--btnink:#0c1818}}
+:root[data-theme="dark"]{--bg:#0c1818;--panel:#132625;--ink:#e4eeea;--mute:#9bb2ad;--line:#2b4643;--accent:#f2c14e;--btn:#e4eeea;--btnink:#0c1818}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.55 "Public Sans",system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:20px 16px 40px}
+h1{font:600 clamp(26px,5vw,40px)/1.1 Fraunces,Georgia,serif;margin:0 0 6px}
+.sub{color:var(--mute);margin:0 0 16px;max-width:60ch}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+button{font:600 15px "Public Sans",system-ui,sans-serif;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button[aria-pressed="true"]{background:var(--btn);color:var(--btnink);border-color:var(--btn)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.stage{display:grid;gap:18px;grid-template-columns:minmax(0,1fr)}
+@media(min-width:820px){.stage{grid-template-columns:minmax(0,600px) 1fr;align-items:start}}
+canvas{width:100%;aspect-ratio:1;display:block;touch-action:none;cursor:grab}
+.side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.side h2{font:600 20px/1.2 Fraunces,Georgia,serif;margin:0 0 8px}
+.side p{margin:0 0 10px}
+.read{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600}
+.ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.ctl label{display:flex;align-items:center;gap:8px}
+input[type=range]{width:130px}
+.note{color:var(--mute);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+<h1>Inside the Poincaré Disk</h1>
+<p class="sub">The whole hyperbolic plane lives inside this circle. Straight lines are arcs that meet the edge at right angles. Drag things and watch the rules of geometry change.</p>
+<nav id="tabs">
+<button data-m="tri" aria-pressed="true">Triangles</button>
+<button data-m="par" aria-pressed="false">Parallel lines</button>
+<button data-m="tile" aria-pressed="false">Tilings</button>
+<button data-m="cmp" aria-pressed="false">Flat vs. hyperbolic</button>
+<button data-m="circ" aria-pressed="false">Distance &amp; circles</button>
+<button data-m="proof" aria-pressed="false">Proof walkthrough</button>
+</nav>
+<div class="stage">
+<canvas id="c" aria-label="Poincaré disk"></canvas>
+<div class="side"><div id="info"></div><canvas id="c2" width="300" height="300" style="display:none;width:100%;max-width:300px;aspect-ratio:1;cursor:default;border-radius:8px"></canvas><div class="ctl" id="ctl"></div></div>
+</div>
+</main>
+<script>
+const cv=document.getElementById('c');let ctx=cv.getContext('2d');
+const PI=Math.PI,TAU=2*PI;
+const mul=(a,b)=>[a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0]];
+const div=(a,b)=>{const d=b[0]*b[0]+b[1]*b[1];return[(a[0]*b[0]+a[1]*b[1])/d,(a[1]*b[0]-a[0]*b[1])/d]};
+const cj=a=>[a[0],-a[1]],add=(a,b)=>[a[0]+b[0],a[1]+b[1]],sub=(a,b)=>[a[0]-b[0],a[1]-b[1]],abs=a=>Math.hypot(a[0],a[1]);
+const T=(a,z)=>div(sub(z,a),sub([1,0],mul(cj(a),z)));   // sends a to 0
+const Ti=(a,z)=>div(add(z,a),add([1,0],mul(cj(a),z)));  // sends 0 to a
+let S=600,dpr=1;
+let zoom=0.96;const Rd=()=>S/2*zoom,Cn=()=>S/2;
+const toS=z=>[Cn()+Rd()*z[0],Cn()-Rd()*z[1]];
+const toZ=(x,y)=>[(x-Cn())/Rd(),-(y-Cn())/Rd()];
+const deg=r=>r*180/PI;
+const unit=t=>[Math.cos(t),Math.sin(t)];
+const nrm=x=>((x%TAU)+TAU)%TAU;
+
+// geodesic through a and b: a straight line (through origin) or a circle orthogonal to the unit circle
+function geoC(a,b){
+  const det=a[0]*b[1]-a[1]*b[0];
+  if(Math.abs(det)<1e-9){const m=abs(a)>1e-9?a:b,l=abs(m)||1;return{line:true,d:[m[0]/l,m[1]/l]};}
+  const ka=(a[0]*a[0]+a[1]*a[1]+1)/2,kb=(b[0]*b[0]+b[1]*b[1]+1)/2;
+  const c=[(ka*b[1]-kb*a[1])/det,(a[0]*kb-b[0]*ka)/det];
+  return{c,r:Math.sqrt(Math.max(c[0]*c[0]+c[1]*c[1]-1,0))};
+}
+function pathGeo(a,b,move=true){
+  const g=geoC(a,b),A=toS(a),B=toS(b);
+  if(move)ctx.moveTo(A[0],A[1]);
+  if(g.line){ctx.lineTo(B[0],B[1]);return;}
+  const th=p=>Math.atan2(p[1]-g.c[1],p[0]-g.c[0]);
+  const ta=th(a);let d=th(b)-ta;
+  while(d>PI)d-=TAU;while(d<-PI)d+=TAU;
+  const cs=toS(g.c);
+  ctx.arc(cs[0],cs[1],g.r*Rd(),-ta,-(ta+d),d>0);
+}
+const hdist=(a,b)=>2*Math.atanh(Math.min(abs(T(a,b)),0.999999999));
+function angleAt(A,B,C){const q=div(T(A,C),T(A,B));return Math.abs(Math.atan2(q[1],q[0]));}
+function refl(g,z){
+  if(g.line)return mul(mul(g.d,g.d),cj(z));
+  const w=sub(z,g.c),n=w[0]*w[0]+w[1]*w[1];
+  return[g.c[0]+g.r*g.r*w[0]/n,g.c[1]+g.r*g.r*w[1]/n];
+}
+
+// regular {p,q} tiling: reflect the central polygon across its edges
+function makePoly(p,q){
+  const ch=(1/Math.tan(PI/p))*(1/Math.tan(PI/q));
+  const r=Math.sqrt((ch-1)/(ch+1));
+  return Array.from({length:p},(_,k)=>[r*Math.cos(TAU*k/p),r*Math.sin(TAU*k/p)]);
+}
+function tiles(poly,LIM){
+  const out=[],seen=new Set(),Q=[[poly,0]];
+  const key=v=>{let x=0,y=0;v.forEach(p=>{x+=p[0];y+=p[1]});return Math.round(x/v.length*3000)+','+Math.round(y/v.length*3000)};
+  seen.add(key(poly));
+  while(Q.length&&out.length<LIM){
+    const[v,dp]=Q.shift();out.push([v,dp]);
+    for(let i=0;i<v.length;i++){
+      const g=geoC(v[i],v[(i+1)%v.length]),nv=v.map(z=>refl(g,z));
+      const k=key(nv);if(seen.has(k))continue;
+      const cx=nv.reduce((s,z)=>s+z[0],0)/nv.length,cy=nv.reduce((s,z)=>s+z[1],0)/nv.length;
+      if(Math.hypot(cx,cy)>0.975||abs(sub(nv[0],nv[1]))<0.009)continue;
+      seen.add(k);Q.push([nv,dp+1]);
+    }
+  }
+  return out;
+}
+const PAL=['#1d5a60','#2b8286','#164349'];
+function drawTiles(list,fill,alpha){
+  list.forEach(([v,dp])=>{
+    ctx.beginPath();pathGeo(v[0],v[1],true);
+    for(let i=1;i<v.length;i++)pathGeo(v[i],v[(i+1)%v.length],false);
+    ctx.closePath();
+    if(fill){ctx.fillStyle=dp===0?'#f2c14e':PAL[dp%3];ctx.fill();}
+    ctx.strokeStyle='rgba(230,240,235,'+alpha+')';ctx.lineWidth=1;ctx.stroke();
+  });
+}
+
+// state
+let mode='tri',drag=null;
+let pts=[[-0.55,-0.3],[0.5,-0.25],[0.05,0.6]],target=60;
+let P=[-0.1,0.4],U=-2.7,V=-0.45;
+let tp=7,tq=3,base=makePoly(7,3),poly=base,warn=false;
+let M=[[1,0],[0,0]];
+let O=[-0.25,-0.1],Q=[0.3,0.35],A=[0.6,0.2],B=[-0.15,0.7],step=0;
+const c2=document.getElementById('c2'),x2=c2.getContext('2d');
+const STEPS=[['Start with two points','A and B are two points in the disk. We want the hyperbolic line through them, using only a compass and straightedge.'],
+['Invert A in the boundary','Let A* be the point on ray OA with OA · OA* = 1. This is the inverse of A in the unit circle.'],
+['Draw one circle','Draw the circle through A, B, and A*. Three points fix exactly one circle. (If A, B, and O are collinear, the “circle” is the straight line through them.)'],
+['Check that it is orthogonal','O lies outside the new circle, with center c and radius r, and its power there is OA · OA* = 1. So |Oc|² − r² = 1. At a crossing point X with |OX| = 1 this gives |Oc|² = |OX|² + |Xc|², so triangle OXc has a right angle at X. The two radii are perpendicular, so the circles cross at right angles.'],
+['That arc is the line','Circles orthogonal to the boundary are the hyperbolic lines. The arc from A to B is the geodesic through them, and it is the only one: any orthogonal circle through A must also pass through A*, so A, B, A* fix it.']];
+const mm=(X,Y)=>[add(mul(X[0],Y[0]),mul(X[1],Y[2])),add(mul(X[0],Y[1]),mul(X[1],Y[3])),add(mul(X[2],Y[0]),mul(X[3],Y[2])),add(mul(X[2],Y[1]),mul(X[3],Y[3]))];
+const m4=m=>[m[0],m[1],cj(m[1]),cj(m[0])];
+const applyM=z=>{const[a,b]=M;return div(add(mul(a,z),b),add(mul(cj(b),z),cj(a)));};
+function panBy(s,t){
+  const N=mm(m4([[1,0],t]),m4([[1,0],[-s[0],-s[1]]])),P=mm(N,m4(M));
+  const k=1/Math.sqrt(Math.max(abs(P[0])**2-abs(P[1])**2,1e-12));
+  M=[[P[0][0]*k,P[0][1]*k],[P[1][0]*k,P[1][1]*k]];poly=base.map(applyM);
+}
+const resetTiling=()=>{base=makePoly(tp,tq);M=[[1,0],[0,0]];poly=base;};
+const clampA=z=>{const l=abs(z);if(l<0.4)z=l?[z[0]*0.4/l,z[1]*0.4/l]:[0.4,0];return clampZ(z);};
+function cmpInfo(ang,sum,sd,info){
+  const[a,b,c]=sd,cl=x=>Math.acos(Math.max(-1,Math.min(1,x)));
+  const ea=[cl((a*a+c*c-b*b)/(2*a*c)),cl((a*a+b*b-c*c)/(2*a*b)),cl((b*b+c*c-a*a)/(2*b*c))];
+  x2.fillStyle='#0f2f33';x2.fillRect(0,0,300,300);
+  const P2=[[0,0],[a,0],[c*Math.cos(ea[0]),c*Math.sin(ea[0])]],xs=P2.map(p=>p[0]),ys=P2.map(p=>p[1]);
+  const mx=Math.min(...xs),my=Math.min(...ys),k=230/Math.max(Math.max(...xs)-mx,Math.max(...ys)-my,1e-6);
+  const q=P2.map(p=>[35+(p[0]-mx)*k,265-(p[1]-my)*k]);
+  x2.beginPath();q.forEach((p,i)=>i?x2.lineTo(p[0],p[1]):x2.moveTo(p[0],p[1]));x2.closePath();
+  x2.fillStyle='rgba(242,193,78,.2)';x2.fill();x2.strokeStyle='#f2c14e';x2.lineWidth=3;x2.stroke();
+  x2.font='600 13px "Public Sans",sans-serif';x2.fillStyle='#e4eeea';x2.textAlign='center';
+  const cx=(q[0][0]+q[1][0]+q[2][0])/3,cy=(q[0][1]+q[1][1]+q[2][1])/3;
+  q.forEach((p,i)=>{const dx=cx-p[0],dy=cy-p[1],l=Math.hypot(dx,dy)||1;x2.fillText(deg(ea[i]).toFixed(1)+'°',p[0]+dx/l*30,p[1]+dy/l*30+4);});
+  const r=(a+b+c)/3;
+  info.innerHTML='<h2>Flat vs. hyperbolic</h2><p>Left: your triangle in the disk. The small panel below is a flat triangle with the same three side lengths.</p>'+
+   '<p>Angle sum, hyperbolic: <span class="read">'+deg(sum).toFixed(1)+'°</span><br>Angle sum, flat: <span class="read">'+deg(ea[0]+ea[1]+ea[2]).toFixed(1)+'°</span></p>'+
+   '<p>A circle of radius '+r.toFixed(2)+' (the average side) has circumference <span class="read">'+(TAU*Math.sinh(r)).toFixed(2)+'</span> here and <span class="read">'+(TAU*r).toFixed(2)+'</span> in the flat plane.</p>'+
+   '<p class="note">Same side lengths, different angles: in hyperbolic space the triangle is “thinner”, and circles are bigger.</p>';
+}
+let bg=null;
+
+function renderBg(){
+  const o=document.createElement('canvas');o.width=o.height=cv.width;
+  const c=o.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);
+  const old=ctx,z0=zoom;ctx=c;zoom=0.96;drawTiles(tiles(makePoly(7,3),900),false,0.1);ctx=old;zoom=z0;bg=o;
+}
+function resize(){
+  const r=cv.getBoundingClientRect();dpr=window.devicePixelRatio||1;S=r.width;
+  cv.width=cv.height=Math.round(S*dpr);renderBg();draw();
+}
+function drawDisk(){
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,S,S);
+  ctx.beginPath();ctx.arc(Cn(),Cn(),Rd(),0,TAU);ctx.fillStyle='#0f2f33';ctx.fill();
+}
+function drawRim(){
+  ctx.beginPath();ctx.arc(Cn(),Cn(),Rd(),0,TAU);ctx.strokeStyle='#e4eeea';ctx.lineWidth=2.5;ctx.stroke();
+}
+function dot(z,col){const s=toS(z);ctx.beginPath();ctx.arc(s[0],s[1],7,0,TAU);ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='#0f2f33';ctx.lineWidth=2;ctx.stroke();}
+
+function draw(){
+  drawDisk();
+  const info=document.getElementById('info');
+  if(mode!=='tile'&&mode!=='proof'&&bg){ctx.drawImage(bg,0,0,S,S);}
+  if(mode==='tri'||mode==='cmp'){
+    ctx.save();ctx.beginPath();pathGeo(pts[0],pts[1]);pathGeo(pts[1],pts[2],false);pathGeo(pts[2],pts[0],false);ctx.closePath();
+    ctx.fillStyle='rgba(242,193,78,.2)';ctx.fill();ctx.strokeStyle='#f2c14e';ctx.lineWidth=3;ctx.stroke();ctx.restore();
+    const ang=[0,1,2].map(i=>angleAt(pts[i],pts[(i+1)%3],pts[(i+2)%3]));
+    const sum=ang.reduce((a,b)=>a+b,0);
+    ctx.font='600 14px "Public Sans",sans-serif';ctx.fillStyle='#e4eeea';ctx.textAlign='center';
+    const cs=toS([0,1,2].reduce((s,i)=>add(s,pts[i]),[0,0]).map(x=>x/3));
+    pts.forEach((z,i)=>{const s=toS(z),dx=cs[0]-s[0],dy=cs[1]-s[1],l=Math.hypot(dx,dy)||1;
+      ctx.fillText(deg(ang[i]).toFixed(1)+'°',s[0]+dx/l*34,s[1]+dy/l*34+5);});
+    pts.forEach(z=>dot(z,'#f2c14e'));
+    const hit=Math.abs(deg(sum)-target)<3;
+    const sd=[hdist(pts[0],pts[1]),hdist(pts[1],pts[2]),hdist(pts[2],pts[0])];
+    if(mode==='cmp')cmpInfo(ang,sum,sd,info);else info.innerHTML='<h2>Triangle angle sum</h2><p>Drag a corner. In flat geometry the angles always add to 180°. Here they never do.</p>'+
+      '<p>Angle sum: <span class="read">'+deg(sum).toFixed(1)+'°</span><br>Angle deficit: <span class="read">'+deg(PI-sum).toFixed(1)+'°</span><br>Area = π − sum = <span class="read">'+(PI-sum).toFixed(3)+'</span><br>Side lengths: <span class="read">'+sd.map(x=>x.toFixed(2)).join(', ')+'</span></p>'+
+      '<p><b>Challenge:</b> make the angle sum <span class="read">'+target+'°</span> (within 3°). '+(hit?'<b class="read">Hit! Try a new target.</b>':'')+'</p>'+
+      '<p class="note">Pull a corner toward the rim and the sum shrinks toward 0°. The area never exceeds π, even though the sides grow without bound.</p>';
+  }
+  if(mode==='par'){
+    const eu=unit(U),ev=unit(V);
+    for(let k=0;k<60;k++){
+      const f=k*PI/60,e1=Ti(P,unit(f)),e2=Ti(P,unit(f+PI));
+      const a1=Math.atan2(e1[1],e1[0]),a2=Math.atan2(e2[1],e2[0]);
+      const bu=nrm(U-a1)<nrm(a2-a1),bv=nrm(V-a1)<nrm(a2-a1);
+      const hitL=bu!==bv;
+      ctx.beginPath();pathGeo(e1,e2);ctx.strokeStyle=hitL?'rgba(160,190,200,.28)':'rgba(242,193,78,.65)';ctx.lineWidth=hitL?1:1.6;ctx.stroke();
+    }
+    const lim=e=>{const w=T(P,e),l=abs(w);return[e,Ti(P,[-w[0]/l,-w[1]/l])];};
+    [eu,ev].forEach(e=>{const[a,b]=lim(e);ctx.beginPath();pathGeo(a,b);ctx.strokeStyle='#f2c14e';ctx.lineWidth=3.2;ctx.stroke();});
+    ctx.beginPath();pathGeo(eu,ev);ctx.strokeStyle='#ffffff';ctx.lineWidth=4;ctx.stroke();
+    dot(eu,'#ffffff');dot(ev,'#ffffff');dot(P,'#f2c14e');
+    const wu=T(P,eu),wv=T(P,ev);let d=Math.abs(Math.atan2(wu[1],wu[0])-Math.atan2(wv[1],wv[0]))%TAU;if(d>PI)d=TAU-d;
+    info.innerHTML='<h2>The parallel postulate fails</h2><p>The white line is L. Drag its two end dots or the point P. Euclid says exactly one line through P misses L.</p>'+
+      '<p>Gold lines pass through P and never meet L. Only those inside a wedge of <span class="read">'+deg(d).toFixed(1)+'°</span> (the faint lines) hit it. The other <span class="read">'+(180-deg(d)).toFixed(1)+'°</span> of directions all miss L.</p>'+
+      '<p class="note">The two bold gold lines are the limiting parallels. They approach L at the rim without ever touching it.</p>';
+  }
+  if(mode==='circ'){
+    const rho=hdist(O,Q),rr=Math.tanh(rho/2);
+    ctx.beginPath();
+    for(let k=0;k<=120;k++){const s=toS(Ti(O,[rr*Math.cos(TAU*k/120),rr*Math.sin(TAU*k/120)]));k?ctx.lineTo(s[0],s[1]):ctx.moveTo(s[0],s[1]);}
+    ctx.closePath();ctx.fillStyle='rgba(242,193,78,.18)';ctx.fill();ctx.strokeStyle='#f2c14e';ctx.lineWidth=3;ctx.stroke();
+    ctx.beginPath();pathGeo(O,Q);ctx.strokeStyle='#fff';ctx.lineWidth=2.5;ctx.stroke();
+    dot(O,'#fff');dot(Q,'#f2c14e');
+    info.innerHTML='<h2>Distance and circles</h2><p>Drag the center O and the point Q. Distance is d = 2·artanh |T(Q)|, where T moves O to the origin. Distances stretch as you near the rim.</p>'+
+     '<p>Distance d(O,Q) = radius: <span class="read">'+rho.toFixed(3)+'</span><br>Circumference 2π·sinh(ρ): <span class="read">'+(TAU*Math.sinh(rho)).toFixed(2)+'</span> (flat: '+(TAU*rho).toFixed(2)+')<br>Area 2π(cosh ρ − 1): <span class="read">'+(TAU*(Math.cosh(rho)-1)).toFixed(2)+'</span> (flat: '+(PI*rho*rho).toFixed(2)+')</p>'+
+     '<p class="note">A hyperbolic circle is a Euclidean circle in the picture, but its center looks off-center. Circumference grows exponentially with radius, not linearly.</p>';
+  }
+  if(mode==='proof'){
+    const ai=abs(A)**2,As=[A[0]/ai,A[1]/ai],g=geoC(A,B),o=toS([0,0]);
+    const lab=(t,z)=>{const s=toS(z);ctx.font='600 15px "Public Sans",sans-serif';ctx.fillStyle='#e4eeea';ctx.textAlign='left';ctx.fillText(t,s[0]+10,s[1]-10);};
+    if(step>=1){ctx.setLineDash([5,5]);ctx.beginPath();const s=toS(As);ctx.moveTo(o[0],o[1]);ctx.lineTo(s[0],s[1]);ctx.strokeStyle='rgba(230,240,235,.5)';ctx.lineWidth=1.5;ctx.stroke();ctx.setLineDash([]);}
+    if(step>=2){ctx.beginPath();
+      if(g.line){const a=toS([-4*g.d[0],-4*g.d[1]]),b=toS([4*g.d[0],4*g.d[1]]);ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);}
+      else{const cs=toS(g.c);ctx.arc(cs[0],cs[1],g.r*Rd(),0,TAU);}
+      ctx.strokeStyle='rgba(160,190,200,.75)';ctx.lineWidth=2;ctx.stroke();}
+    if(step>=3&&!g.line){const cs=toS(g.c);ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(o[0],o[1]);ctx.lineTo(cs[0],cs[1]);ctx.strokeStyle='rgba(230,240,235,.5)';ctx.lineWidth=1.5;ctx.stroke();ctx.setLineDash([]);dot(g.c,'#9bb2ad');lab('c',g.c);}
+    if(step>=4){ctx.beginPath();pathGeo(A,B);ctx.strokeStyle='#f2c14e';ctx.lineWidth=4.5;ctx.stroke();}
+    dot([0,0],'#e4eeea');lab('O',[0,0]);dot(A,'#f2c14e');lab('A',A);dot(B,'#f2c14e');lab('B',B);
+    if(step>=1){dot(As,'#9be3d4');lab('A*',As);}
+    info.innerHTML='<h2>Proof: building a hyperbolic line</h2><p class="note">Step '+(step+1)+' of 5</p><p><b>'+STEPS[step][0]+'</b></p><p>'+STEPS[step][1]+'</p><p class="note">Drag A and B. The disk is zoomed out so A* stays on screen.</p>';
+  }
+  if(mode==='tile'){
+    drawTiles(tiles(poly,1400),true,0.55);
+    const ia=360/tq,ea=180*(tp-2)/tp;
+    info.innerHTML='<h2>Regular tiling {'+tp+','+tq+'}</h2><p>'+tp+'-sided tiles, '+tq+' meeting at every corner. Drag the disk to slide the whole plane around. Every tile is the same size in hyperbolic terms.</p>'+
+      '<p>Interior angle: <span class="read">'+ia.toFixed(1)+'°</span><br>A flat regular '+tp+'-gon has <span class="read">'+ea.toFixed(1)+'°</span>, so the tiles are "bent" to fit.</p>'+
+      (warn?'<p class="read">{'+sp+','+sq+'} is flat or spherical: you need (p−2)(q−2) &gt; 4. Raise p or q.</p>':'')+
+      '<p class="note">Moving the picture is a Möbius transformation, and flipping a tile across an edge is an inversion in a circle.</p>';
+  }
+  drawRim();
+}
+let sp=7,sq=3;
+function controls(){
+  const c=document.getElementById('ctl');
+  if(mode==='tri'){
+    c.innerHTML='<button id="nt">New target</button><button id="rs">Reset</button>';
+    nt.onclick=()=>{target=20+5*Math.floor(Math.random()*29);draw();};
+    rs.onclick=()=>{pts=[[-0.55,-0.3],[0.5,-0.25],[0.05,0.6]];draw();};
+  }else if(mode==='cmp'){
+    c.innerHTML='<button id="rs">Reset</button>';
+    rs.onclick=()=>{pts=[[-0.55,-0.3],[0.5,-0.25],[0.05,0.6]];draw();};
+  }else if(mode==='circ'){
+    c.innerHTML='<button id="rs">Reset</button>';
+    rs.onclick=()=>{O=[-0.25,-0.1];Q=[0.3,0.35];draw();};
+  }else if(mode==='proof'){
+    c.innerHTML='<button id="pv">Back</button><button id="nx">Next step</button>';
+    pv.onclick=()=>{step=Math.max(0,step-1);draw();};
+    nx.onclick=()=>{step=Math.min(4,step+1);draw();};
+  }else if(mode==='par'){
+    c.innerHTML='<button id="rs">Reset</button>';
+    rs.onclick=()=>{P=[-0.1,0.4];U=-2.7;V=-0.45;draw();};
+  }else{
+    c.innerHTML='<label>p sides <input type="range" id="sp" min="3" max="12" value="'+sp+'"><b id="vp">'+sp+'</b></label><label>q per corner <input type="range" id="sq" min="3" max="12" value="'+sq+'"><b id="vq">'+sq+'</b></label><button id="rs">Recenter</button>';
+    const upd=()=>{sp=+document.getElementById('sp').value;sq=+document.getElementById('sq').value;
+      document.getElementById('vp').textContent=sp;document.getElementById('vq').textContent=sq;
+      warn=(sp-2)*(sq-2)<=4;if(!warn){tp=sp;tq=sq;resetTiling();}draw();};
+    document.getElementById('sp').oninput=upd;document.getElementById('sq').oninput=upd;
+    rs.onclick=()=>{resetTiling();draw();};
+  }
+}
+document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{
+  mode=b.dataset.m;zoom=mode==='proof'?0.38:0.96;document.getElementById('c2').style.display=mode==='cmp'?'block':'none';document.querySelectorAll('#tabs button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  warn=false;controls();draw();
+});
+
+// pointer interaction
+const clampZ=z=>{const l=abs(z);return l>0.96?[z[0]*0.96/l,z[1]*0.96/l]:z;};
+function pos(e){const r=cv.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top];}
+cv.addEventListener('pointerdown',e=>{
+  const[x,y]=pos(e);let best=null,bd=20;
+  const cand=(mode==='tri'||mode==='cmp')?pts.map((z,i)=>['t',i,z]):mode==='par'?[['P',0,P],['u',0,unit(U)],['v',0,unit(V)]]:mode==='circ'?[['O',0,O],['Q',0,Q]]:mode==='proof'?[['A',0,A],['B',0,B]]:[];
+  cand.forEach(([k,i,z])=>{const s=toS(z),d=Math.hypot(s[0]-x,s[1]-y);if(d<bd){bd=d;best=[k,i];}});
+  if(best)drag={k:best[0],i:best[1]};
+  else if(mode==='tile')drag={k:'pan',s:clampZ(toZ(x,y))};
+  if(drag){cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing';}
+});
+cv.addEventListener('pointermove',e=>{
+  if(!drag)return;const[x,y]=pos(e),z=toZ(x,y);
+  if(drag.k==='t')pts[drag.i]=clampZ(z);
+  else if(drag.k==='P')P=clampZ(z);
+  else if(drag.k==='O')O=clampZ(z);
+  else if(drag.k==='Q')Q=clampZ(z);
+  else if(drag.k==='A')A=clampA(z);
+  else if(drag.k==='B')B=clampA(z);
+  else if(drag.k==='u')U=Math.atan2(z[1],z[0]);
+  else if(drag.k==='v')V=Math.atan2(z[1],z[0]);
+  else if(drag.k==='pan'){const t=clampZ(z);panBy(drag.s,t);drag.s=t;}
+  draw();
+});
+const end=()=>{drag=null;cv.style.cursor='grab';};
+cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);
+window.addEventListener('resize',resize);
+controls();resize();
+</script>
+</body>
+</html>
